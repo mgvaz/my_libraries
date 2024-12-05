@@ -142,7 +142,8 @@ class fit_pulse:
                 get_data_kwargs=dict(), 
                 R_multiplier=None,
                 crop_data_kwargs=dict(to_left=0.04, to_right=0.02),
-                shorten_data=True):
+                shorten_data=True,
+                ):
         
         
         self.pulse = pulse
@@ -258,7 +259,7 @@ class fit_pulse:
         arg_max, max = find_spl_crit(self.deriv, 'max_absolute', interval)
         return arg_max, max
     
-    def min_curv(self, num=1000, interval=None):
+    def min_curv(self, num=1000, interval=None, version=0):
         """Returns curvature minimum and its location
 
         Args:
@@ -268,24 +269,35 @@ class fit_pulse:
             x_min, curvature_min: position at which curvature is minimum and its value
         """
         
+        if version==0:
+            if interval:
+                x_eval=np.linspace(interval[0], interval[1], num)
+            else:
+                maximum=self.max_curv(num)[0]
+                x_eval=np.linspace(maximum, self.R[-1], num)
+            
+            y_eval=self.curvature(x_eval)
+            
+            x_min=x_eval[np.argmin(y_eval)]
+            
+            return x_min, self.curvature(x_min)
         
-        if interval:
-            x_eval=np.linspace(interval[0], interval[1], num)
         else:
-            maximum=self.max_curv(num)[0]
-            x_eval=np.linspace(maximum, self.R[-1], num)
-        
-        y_eval=self.curvature(x_eval)
-        
-        x_min=x_eval[np.argmin(y_eval)]
-        
-        return x_min, self.curvature(x_min)
+            # first - find second derivative roots
+            arg_min, min = find_spl_crit(self.spl.derivative(2), 'min_absolute', interval)
+
+            min_list=[]
+            for x in arg_min:
+                x_i = minimize_scalar(lambda x: self.spl(x), bracket=[x-0.01, x+0.01])
+                min_list.append(x_i.x)
+            return min_list
+
 
     def min_shear(self, interval):
         arg_min, min = find_spl_crit(self.deriv, 'min_absolute', interval)
         return arg_min, min
 
-    def integrate_shear_by_curvature_same_distance(self, ax_shear=None, ax_curv=None, average=False):
+    def integrate_shear_by_curvature_same_distance(self, ax_shear=None, ax_curv=None, average=False, return_limits=False):
 
         """integrate the fits velocity taking as integration limits the maximum and minimum of the fits curvature.
         inner shear is defined as the integral taken over that distance to the left of the maximum
@@ -311,6 +323,7 @@ class fit_pulse:
             inner_shear=self.deriv_integrate(x=[x_c_max-distance, x_c_max], ax=ax_shear)
             outter_shear=self.deriv_integrate(x=[x_c_max, x_c_min], ax=ax_shear)
             scrape_off=self.deriv_integrate(x=[x_c_min, x_c_min+distance], ax=ax_shear)
+
         else:
             inner_shear=self.deriv_integrate(x=[x_c_max-distance, x_c_max], ax=ax_shear)/distance
             outter_shear=self.deriv_integrate(x=[x_c_max, x_c_min], ax=ax_shear)/distance
@@ -320,8 +333,11 @@ class fit_pulse:
             ax_curv.scatter(np.array([x_c_min,x_c_max]), self.curvature(np.array([x_c_min,x_c_max])))
             
         #print(integral1,integral2,integral3)
-            
-        return inner_shear, outter_shear, scrape_off
+        
+        if return_limits:
+            return (inner_shear, outter_shear, scrape_off), (x_c_max-distance, x_c_max, x_c_min, x_c_min+distance)
+        else:
+            return inner_shear, outter_shear, scrape_off
 
     def integrate_shear_by_velocity_same_distance(self, ax_shear=None):
         """integrate the fits velocity taking as integration limits the maximum and minimum of the fits velocity.
@@ -374,7 +390,7 @@ class fit_pulse:
             
         return inner_shear, outter_shear, scrape_off
 
-    def integrate_shear_by_curvature(self, ax_shear=None, ax_curv=None, average=False):
+    def integrate_shear_by_curvature(self, ax_shear=None, ax_curv=None, average=False, return_limits=False):
         
         curv_max=self.max_curv()[0]
             
@@ -397,8 +413,11 @@ class fit_pulse:
             ax_curv.scatter(np.array([curv_min_2, curv_max, curv_min, curv_max_2]), self.curvature(np.array([curv_min_2, curv_max, curv_min, curv_max_2])))
             
         #print(integral1,integral2,integral3)
-            
-        return inner, outter, scrape
+
+        if return_limits:
+            return (inner, outter, scrape), (curv_min_2, curv_max, curv_min, curv_max_2)  
+        else:
+            return inner, outter, scrape
     
     def max_shear_between_curvature_extremes(self):
         
@@ -471,7 +490,7 @@ class fit_pulse:
         
         return inner, outter, scrape
    
-    def integrate_shear_by_density_2nd_derivative(self, tol=0.05, ax_shear=None, ax_density_2nd_derivative=None, average=False):
+    def integrate_shear_by_density_2nd_derivative(self, tol=0.05, ax_shear=None, ax_density_2nd_derivative=None, average=False, return_limits=False):
         #density curvature roots approximately
         density_2nd_derivative_root1 = find_spl_root(self.density_2nd_derivative, root=-tol, interval=[self.R[0], self.R[-1]])[0]
         density_2nd_derivative_root2 = find_spl_root(self.density_2nd_derivative, root=tol, interval=[self.R[0], self.R[-1]])[-1]
@@ -493,4 +512,7 @@ class fit_pulse:
             ax_density_2nd_derivative.scatter(np.array([density_2nd_derivative_root1, density_2nd_derivative_root2, curv_max, curv_min]),\
                 self.density_2nd_derivative(np.array([density_2nd_derivative_root1, density_2nd_derivative_root2, curv_max, curv_min])))
         
-        return inner, outter, scrape
+        if return_limits:
+            return (inner, outter, scrape), (density_2nd_derivative_root1, curv_max, curv_min, density_2nd_derivative_root2)
+        else:
+            return inner, outter, scrape

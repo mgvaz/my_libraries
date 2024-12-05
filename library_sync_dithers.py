@@ -451,7 +451,6 @@ def filter_sig(t_sig, sig, f_cut_off):
 
 
 def peak_find_args(pulse, fs, sig):
-
     param_dict_tdao = {
                         '96292': dict(height=-1.05e16, prominence=0.4e15),
                         '96294': dict(height=-1.07e16, prominence=0.3e15),
@@ -463,7 +462,7 @@ def peak_find_args(pulse, fs, sig):
                         '99472': dict(height=-2.5e15, prominence=0.1e15)                        
     }
     param_dict_dtdai_pos = {
-                            '96292': dict(distance=int(0.005*fs), height=0.4e19, prominence=0.4e19),
+                            '96292': dict(distance=int(0.006*fs), height=0.62e19, prominence=0.4e19),
                             '94120': dict(distance=int(0.005*fs), height=2e19, prominence=0.4e19),
                             '96294': dict(distance=int(0.005*fs), height=0.4e19, prominence=0.4e19 ),
                             '105439': dict(distance=int(0.005*fs), height=2e19,),
@@ -474,7 +473,7 @@ def peak_find_args(pulse, fs, sig):
                             
                             }
     param_dict_dtdai_neg = {
-                            '96292': dict(height = 0.2e19, distance=int(5e-3 * fs)),
+                            '96292': dict(height = 5e18, distance=int(5e-3 * fs)),
                             '94120': dict(height = 2e19, distance=int(5e-3 * fs)),
                             '96294': dict(height = 0.4e19, distance = int(5e-3 * fs) ),
                             '105439': dict(distance=int(0.006*fs), height=0.4e19),
