@@ -239,19 +239,44 @@ def center_of_mass(freq, S_f, freq_range=None,
                 return_fluctuations=False):
 
     if freq_range:
-        indices_to_eval_on=((freq<=(-freq_range[0]*1000)) & (freq>=(-freq_range[1]*1000))) | ((freq>=(freq_range[0]*1000)) & (freq<=(freq_range[1]*1000)))
-        S_f = S_f[indices_to_eval_on]
-        freq = freq[indices_to_eval_on] 
+        assert freq_range[0]<freq_range[1], 'freq_range[0] should be smaller than freq_range[1]'
 
-    CM = np.sum(freq * S_f)/np.sum(S_f)
+    if len(S_f.shape)==1:
+        if freq_range:
+            indices_to_eval_on=((freq<=(-freq_range[0]*1000)) & (freq>=(-freq_range[1]*1000))) | ((freq>=(freq_range[0]*1000)) & (freq<=(freq_range[1]*1000)))
+            S_f = S_f[indices_to_eval_on]
+            freq = freq[indices_to_eval_on] 
 
-    to_return = (CM,)
+        CM = np.sum(freq * S_f)/np.sum(S_f)
 
-    if return_fluctuations:
-        to_return = to_return + (np.sum(S_f) / (len(S_f)),)
+        to_return = (CM,)
+
+        if return_fluctuations:
+            if freq_range:
+                to_return = to_return + (np.mean(S_f) * 2 * (freq_range[1]-freq_range[0]),)
+            else:
+                to_return = to_return + (np.mean(S_f) * (np.max(freq)-np.min(freq)),)
+
+        return to_return
     
-    return to_return
-   
+
+    if len(S_f.shape)==2:
+        if freq_range:
+            indices_to_eval_on=((freq<=(-freq_range[0]*1000)) & (freq>=(-freq_range[1]*1000))) | ((freq>=(freq_range[0]*1000)) & (freq<=(freq_range[1]*1000)))
+            S_f = S_f[indices_to_eval_on,:]
+            freq = freq[indices_to_eval_on] 
+
+        CM = np.dot(S_f.T, freq)/np.sum(S_f, axis=0)
+        
+        to_return = (CM,)
+
+        if return_fluctuations:
+            if freq_range:
+                to_return = to_return + (np.mean(S_f, axis=0) * 2 * (freq_range[1]-freq_range[0]),)
+            else:
+                to_return = to_return + (np.mean(S_f, axis=0) * (np.max(freq)-np.min(freq)),)
+        
+        return to_return  
 
 def index_at(t, t_look, fs):
     if fs is None:
@@ -326,7 +351,7 @@ def make_it_array(my_list):
     return M
 
 
-def moving_average_non_unif(x, y, dx=None, dx_overlap=0, bins=None, n=None, x_begin=None, x_stop=None, average_x=False, return_counts=False):
+def moving_average_non_unif(x, y, dx=None, dx_overlap=0, bins=None, n=None, x_begin=None, x_stop=None, return_counts=False):
 
     #print(dx is not None, n is not None, bins is not None)
     assert (dx is not None) or (n is not None) or (bins is not None), 'dx, n or bins must be provided'
@@ -422,7 +447,9 @@ def get_ditters_indices(begin, end):
     return ditters_list
 
 def sync_signals(t, t_stamps, t_shift=0, normalize=False):
-
+    if type(t) is float:
+        t = np.array([t])
+        
     t_sync = np.full(t.shape, np.nan)
     if normalize:
         for i in range(len(t_stamps) - 1):
@@ -613,8 +640,7 @@ def dithers_trigger_H_alpha_inner_derivative(pulse, t , H_alpha, ti, tf, smoothi
     return t_peaks_pos, y_peaks_pos, t_peaks_neg, y_peaks_neg
 
 def dithers_trigger_H_alpha_outter(pulse, t, H_alpha, ti, tf):
-
- 
+    
     ttdao_cropped, tdao_cropped = crop_data(t, H_alpha, ti=ti, tf=tf)
     fs_tdao=np.mean(np.diff(ttdao_cropped))
     peaks, _ = find_peaks(-tdao_cropped, **peak_find_args(pulse, fs_tdao, 'tdao'))
@@ -667,7 +693,9 @@ def t_shift_calculator(t_stamps_df, key, ref_key='H_alpha_inner', t_shift=0.):
     return np.mean(t_stamps_df[key]-t_stamps_df[ref_key])+t_shift
 
 
-def best_sync_key(t_stamps_df, ref_signal, n_bins=70, use_t_shift_calculator=True, t_shift=0., **use_t_shift_calculator_kwargs):
+def best_sync_key(t_stamps_df, ref_signal, n_bins=70, bin_width=None, use_t_shift_calculator=True, t_shift=0., **use_t_shift_calculator_kwargs):
+    assert len(ref_signal)==2, 'ref_signal should be a tuple with (t, signal)'
+    assert (n_bins is None) or (bin_width is None), 'n_bins and bin_width cannot be provided at the same time'
     dict_std={}
     for key in t_stamps_df.keys():
         if use_t_shift_calculator:
@@ -679,10 +707,31 @@ def best_sync_key(t_stamps_df, ref_signal, n_bins=70, use_t_shift_calculator=Tru
         df_sync['t_sync'] = t_sync[~np.isnan(t_sync)]
         df_sync['signal'] = ref_signal[1][~np.isnan(t_sync)]
 
-        map_time, bins_time = pd.qcut(df_sync['t_sync'], n_bins, precision=50, retbins=True, duplicates='drop')
+        if n_bins:
+            map_time, bins_time = pd.qcut(df_sync['t_sync'], n_bins, precision=50, retbins=True, duplicates='drop')
+        elif bin_width:
+            bins_time = np.arange(df_sync['t_sync'].min(), df_sync['t_sync'].max(), bin_width)
+            map_time = pd.cut(df_sync['t_sync'], bins_time, precision=50, duplicates='drop')
 
         std=df_sync.groupby([map_time], observed=False).std().sum()['signal']
 
         dict_std[key] = std
 
     return min(dict_std, key=dict_std.get)
+
+def automatic_bins(t_s, dt, n=None):
+    """
+    Automatic number of bins for a given time array
+    
+    Args:
+        t_s (array): time array
+        dt (float): time interval
+        n (int): number of points per bin
+    """
+    assert (dt is None) or (n is None), 'dt and n cannot be provided at the same time'
+    t_s = t_s[~np.isnan(t_s)]
+    if dt:
+        t0 = t_s[0]
+        return int(len(t_s)/len(t_s[(t_s>=t0) & (t_s<=t0+dt)]))
+    elif n:
+        return int(len(t_s)/n)
