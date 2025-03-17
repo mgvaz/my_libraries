@@ -157,30 +157,26 @@ def gauss(x, a, x0, sigma):
 def jac_gauss(x, a, x0, sigma):
     return np.array([np.exp(-(x-x0)**2/(2*sigma**2)), (x-x0)/sigma**2 * a*np.exp(-(x-x0)**2/(2*sigma**2)), (x-x0)**2 / (sigma**3) * a*np.exp(-(x-x0)**2/(2*sigma**2))]).T
 
-def my_fft(fs, i, q, indices, t=None, 
+def my_fft(t, i, q, t0, nfft,
             plot=True, plot_kw={}, return_plot=False,
             fmin=-400, fmax=400,
             remove_detrend=True, remove_detrend_args=dict(type='constant'), 
             **fft_args):
+    
+    assert has_even_sampling(t), 't does not have even sampling'
 
-    if (fs is None) and (t is not None):
-        assert has_even_sampling(t), 't does not have even sampling, fs must be provided'
-        fs=1/(t[1]-t[0])
+    fs = 1/np.mean(np.diff(t))
 
-    if q is None:
-        q=np.zeros_like(i)
-
-    if indices is None:
-        indices=np.arange(0, len(i))
-    assert indices.ndim==1, 'indices should be a 1D array'
-
+    start = find_nearest(t, t0, to_return='indice') 
+    indices = np.arange(start, start+nfft)
+    t=t[indices]
     i=i[indices]
     q=q[indices]
 
     if remove_detrend:
         i=detrend(i, **remove_detrend_args)
         q=detrend(q, **remove_detrend_args)
-        
+    
     fft_data=fft(i+1j*q, norm='forward', **fft_args)
     fft_freq=fftfreq(len(fft_data), 1/fs)
     fft_data=fftshift(fft_data)
@@ -192,8 +188,9 @@ def my_fft(fs, i, q, indices, t=None,
         ax.set_xlim(left=fmin, right=fmax)
         ax.set_xlabel('f (kHz)')
         ax.set_ylabel('S(f)')
+        ax.grid()
         if t is not None:
-            ax.set_title('t = '+str(np.round(t[indices[0]],3))+ '\n'+'delta_t = ' + str(np.round((t[indices[-1]]-t[indices[0]])*1000, 1)) + ' ms')
+            ax.set_title('t = '+str(np.round(t[int(nfft/2)],3))+ '\n'+'delta_t = ' + str(np.round((t[-1]-t[0])*1000, 1)) + ' ms')
         else:
             ax.set_title('delta_t = ' + str(np.round(()*1000, 1)))
 
@@ -215,6 +212,7 @@ def fit_fft(freq, S_f, freq_range=None,
         
     if p0=='auto':
         CM = np.sum(freq * S_f)/np.sum(S_f)
+        #sigma = np.sqrt(np.sum((freq-CM)**2 * S_f) / np.sum(S_f))
         sigma = np.sqrt(np.sum((freq-CM)**2 * S_f) / np.sum(S_f))
         dfreq = freq[1]-freq[0]
         amp = np.sum(S_f * dfreq)/(sigma*np.sqrt(2*np.pi))
@@ -693,10 +691,15 @@ def t_shift_calculator(t_stamps_df, key, ref_key='H_alpha_inner', t_shift=0.):
     return np.mean(t_stamps_df[key]-t_stamps_df[ref_key])+t_shift
 
 
-def best_sync_key(t_stamps_df, ref_signal, n_bins=70, bin_width=None, use_t_shift_calculator=True, t_shift=0., **use_t_shift_calculator_kwargs):
+def best_sync_key(t_stamps_df, ref_signal, n_bins=70, bin_width=None, use_t_shift_calculator=True, t_shift=0.,
+                  plot_all=False, plot_bins=False, plot_kws=dict(),
+                  return_std = False,
+                  return_all_std=False,
+                  **use_t_shift_calculator_kwargs):
     assert len(ref_signal)==2, 'ref_signal should be a tuple with (t, signal)'
     assert (n_bins is None) or (bin_width is None), 'n_bins and bin_width cannot be provided at the same time'
     dict_std={}
+
     for key in t_stamps_df.keys():
         if use_t_shift_calculator:
             t_shift = t_shift_calculator(t_stamps_df, key, **use_t_shift_calculator_kwargs)
@@ -706,6 +709,7 @@ def best_sync_key(t_stamps_df, ref_signal, n_bins=70, bin_width=None, use_t_shif
         df_sync = pd.DataFrame()
         df_sync['t_sync'] = t_sync[~np.isnan(t_sync)]
         df_sync['signal'] = ref_signal[1][~np.isnan(t_sync)]
+        df_sync['time'] = ref_signal[0][~np.isnan(t_sync)]
 
         if n_bins:
             map_time, bins_time = pd.qcut(df_sync['t_sync'], n_bins, precision=50, retbins=True, duplicates='drop')
@@ -717,7 +721,22 @@ def best_sync_key(t_stamps_df, ref_signal, n_bins=70, bin_width=None, use_t_shif
 
         dict_std[key] = std
 
-    return min(dict_std, key=dict_std.get)
+        if plot_all:
+            fig, ax = plots(x=df_sync['t_sync'], y=df_sync['signal'], z=df_sync['time'],
+                            title=f"Sync. by {key} - Avg STD = {std}",
+                            x_labels='t_sync', y_labels='signal', z_labels='time',
+                            markersizes=5,
+                            **plot_kws)
+            if plot_bins:
+                for bin_time in bins_time:
+                    ax.axvline(bin_time, c='r', ls='--')
+    
+    if return_all_std:
+        return min(dict_std, key=dict_std.get), dict_std
+    if return_std:
+        return min(dict_std, key=dict_std.get), dict_std[min(dict_std, key=dict_std.get)]
+    else:
+        return min(dict_std, key=dict_std.get)
 
 def automatic_bins(t_s, dt, n=None):
     """
@@ -731,7 +750,7 @@ def automatic_bins(t_s, dt, n=None):
     assert (dt is None) or (n is None), 'dt and n cannot be provided at the same time'
     t_s = t_s[~np.isnan(t_s)]
     if dt:
-        t0 = t_s[0]
+        t0 = np.min(t_s)
         return int(len(t_s)/len(t_s[(t_s>=t0) & (t_s<=t0+dt)]))
     elif n:
         return int(len(t_s)/n)
